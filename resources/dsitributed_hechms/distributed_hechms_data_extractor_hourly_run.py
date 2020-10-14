@@ -6,6 +6,7 @@ from os.path import join as path_join
 from datetime import datetime, timedelta
 import re
 import csv
+import time
 
 from db_adapter.logger import logger
 from db_adapter.constants import COMMON_DATE_TIME_FORMAT, CURW_FCST_DATABASE, CURW_FCST_PASSWORD, CURW_FCST_USERNAME, \
@@ -18,12 +19,6 @@ from db_adapter.curw_fcst.station import get_hechms_stations
 from db_adapter.curw_fcst.timeseries import Timeseries
 
 hechms_stations = {}
-
-USERNAME = "root"
-PASSWORD = "password"
-HOST = "127.0.0.1"
-PORT = 3306
-DATABASE = "curw_fcst"
 
 
 def read_csv(file_name):
@@ -46,7 +41,7 @@ def read_attribute_from_config_file(attribute, config, compulsory):
     :param compulsory: Boolean value: whether the attribute is must present or not in the config file
     :return:
     """
-    if attribute in config and (config[attribute]!=""):
+    if attribute in config and (config[attribute] != ""):
         return config[attribute]
     elif compulsory:
         logger.error("{} not specified in config file.".format(attribute))
@@ -77,10 +72,10 @@ def getUTCOffset(utcOffset, default=False):
         else:
             return False
 
-    if utcOffset[0]=="-":  # If timestamp in negtive zone, add it to current time
+    if utcOffset[0] == "+":  # If timestamp in positive zone, add it to current time
         offset_str = utcOffset[1:].split(':')
         return timedelta(hours=int(offset_str[0]), minutes=int(offset_str[1]))
-    if utcOffset[0]=="+":  # If timestamp in positive zone, deduct it to current time
+    if utcOffset[0] == "-":  # If timestamp in negative zone, deduct it from current time
         offset_str = utcOffset[1:].split(':')
         return timedelta(hours=-1 * int(offset_str[0]), minutes=-1 * int(offset_str[1]))
 
@@ -91,6 +86,13 @@ def isfloat(value):
         return True
     except ValueError:
         return False
+
+
+def get_file_last_modified_time(file_path):
+    # returns local time (UTC + 5 30)
+    modified_time = time.gmtime(os.path.getmtime(file_path) + 19800)
+
+    return time.strftime('%Y-%m-%d %H:%M:%S', modified_time)
 
 
 def extractForecastTimeseries(timeseries, extract_date, extract_time, by_day=False):
@@ -117,7 +119,7 @@ def extractForecastTimeseries(timeseries, extract_date, extract_time, by_day=Fal
     return new_timeseries
 
 
-def save_forecast_timeseries_to_db(pool, timeseries, run_date, run_time, tms_meta):
+def save_forecast_timeseries_to_db(pool, timeseries, run_date, run_time, tms_meta, fgt):
     print('EXTRACTFLO2DWATERLEVEL:: save_forecast_timeseries >>', tms_meta)
 
     # {
@@ -133,7 +135,7 @@ def save_forecast_timeseries_to_db(pool, timeseries, run_date, run_time, tms_met
 
     forecast_timeseries = []
 
-    if 'utcOffset' in tms_meta:    # If there is an offset, shift by offset before proceed
+    if 'utcOffset' in tms_meta:  # If there is an offset, shift by offset before proceed
         print('Shift by utcOffset:', tms_meta['utcOffset'].resolution)
         # Convert date time with offset
         date_time = date_time + tms_meta['utcOffset']
@@ -141,7 +143,7 @@ def save_forecast_timeseries_to_db(pool, timeseries, run_date, run_time, tms_met
         run_time = date_time.strftime('%H:%M:%S')
         for item in timeseries:
             forecast_timeseries.append(
-                    [datetime.strptime(item[0], COMMON_DATE_TIME_FORMAT) + tms_meta['utcOffset'], item[1]])
+                [datetime.strptime(item[0], COMMON_DATE_TIME_FORMAT) + tms_meta['utcOffset'], item[1]])
     else:
         forecast_timeseries = timeseries
 
@@ -155,38 +157,38 @@ def save_forecast_timeseries_to_db(pool, timeseries, run_date, run_time, tms_met
             tms_id = TS.generate_timeseries_id(meta_data=tms_meta)
             tms_meta['tms_id'] = tms_id
             TS.insert_run(run_meta=tms_meta)
-            TS.update_start_date(id_=tms_id, start_date=('%s %s' % (run_date, run_time)))
+            TS.update_start_date(id_=tms_id, start_date=fgt)
 
-        TS.insert_data(timeseries=forecast_timeseries, tms_id=tms_id, fgt=('%s %s' % (run_date, run_time)), upsert=True)
-        TS.update_latest_fgt(id_=tms_id, fgt=('%s %s' % (run_date, run_time)))
+        TS.insert_data(timeseries=forecast_timeseries, tms_id=tms_id, fgt=fgt, upsert=True)
+        TS.update_latest_fgt(id_=tms_id, fgt=fgt)
 
     except Exception:
         logger.error("Exception occurred while pushing data to the curw_fcst database")
         traceback.print_exc()
 
 
-if __name__=="__main__":
+def extract_distrubuted_hechms_outputs(output_file_name, output_dir, run_date, run_time):
 
     """
     Config.json 
     {
       "output_file_name": "DailyDischarge.csv",
       "output_dir": "",
-    
+
       "run_date": "2019-05-24",
       "run_time": "00:00:00",
       "utc_offset": "",
-    
+
       "sim_tag": "hourly_run",
-    
+
       "model": "HECHMS",
       "version": "single",
-    
+
       "unit": "m3/s",
       "unit_type": "Instantaneous",
-    
+
       "variable": "Discharge",
-    
+
       "station_name": "Hanwella"
     }
 
@@ -196,11 +198,12 @@ if __name__=="__main__":
         config = json.loads(open('config.json').read())
 
         # output related details
-        output_file_name = read_attribute_from_config_file('output_file_name', config, True)
-        output_dir = read_attribute_from_config_file('output_dir', config, True)
+        output_file_name = output_file_name
+        output_dir = output_dir
 
-        run_date = read_attribute_from_config_file('run_date', config, True)
-        run_time = read_attribute_from_config_file('run_time', config, True)
+        run_date = run_date
+        run_time = run_time
+
         utc_offset = read_attribute_from_config_file('utc_offset', config, False)
         if utc_offset is None:
             utc_offset = ''
@@ -224,11 +227,18 @@ if __name__=="__main__":
 
         out_file_path = os.path.join(output_dir, output_file_name)
 
+        if not os.path.exists(out_file_path):
+            msg = 'no file :: {}'.format(out_file_path)
+            logger.warning(msg)
+            print(msg)
+            exit(1)
+
+        fgt = get_file_last_modified_time(out_file_path)
+        print("fgt, ", fgt)
+
         timeseries = read_csv(out_file_path)
 
-        # pool = get_Pool(host=CURW_FCST_HOST, port=CURW_FCST_PORT, db=CURW_FCST_DATABASE, user=CURW_FCST_USERNAME, password=CURW_FCST_PASSWORD)
-
-        pool = get_Pool(host=HOST, port=PORT, user=USERNAME, password=PASSWORD, db=DATABASE)
+        pool = get_Pool(host=CURW_FCST_HOST, port=CURW_FCST_PORT, db=CURW_FCST_DATABASE, user=CURW_FCST_USERNAME, password=CURW_FCST_PASSWORD)
 
         hechms_stations = get_hechms_stations(pool=pool)
 
@@ -243,28 +253,28 @@ if __name__=="__main__":
         unit_id = get_unit_id(pool=pool, unit=unit, unit_type=unit_type)
 
         tms_meta = {
-                'sim_tag'    : sim_tag,
-                'model'      : model,
-                'version'    : version,
-                'variable'   : variable,
-                'unit'       : unit,
-                'unit_type'  : unit_type.value,
-                'latitude'   : lat,
-                'longitude'  : lon,
-                'station_id' : station_id,
-                'source_id'  : source_id,
-                'variable_id': variable_id,
-                'unit_id'    : unit_id
-                }
+            'sim_tag': sim_tag,
+            'model': model,
+            'version': version,
+            'variable': variable,
+            'unit': unit,
+            'unit_type': unit_type.value,
+            'latitude': lat,
+            'longitude': lon,
+            'station_id': station_id,
+            'source_id': source_id,
+            'variable_id': variable_id,
+            'unit_id': unit_id
+        }
 
         utcOffset = getUTCOffset(utc_offset, default=True)
 
-        if utcOffset!=timedelta():
+        if utcOffset != timedelta():
             tms_meta['utcOffset'] = utcOffset
 
         # Push timeseries to database
         save_forecast_timeseries_to_db(pool=pool, timeseries=timeseries,
-                run_date=run_date, run_time=run_time, tms_meta=tms_meta)
+                                       run_date=run_date, run_time=run_time, tms_meta=tms_meta, fgt=fgt)
 
     except Exception as e:
         logger.error('JSON config data loading error.')

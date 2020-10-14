@@ -18,13 +18,13 @@ if __name__=="__main__":
 
     try:
 
-        ####################################
-        # Initialize parameters for HECHMS #
-        ####################################
+        ################################################
+        # Initialize parameters for DISTRIBUTED HECHMS #
+        ################################################
 
         # source details
         model = 'HECHMS'
-        version = 'single'
+        version = 'distributed'
 
         # unit details
         unit = 'm3/s'
@@ -36,24 +36,24 @@ if __name__=="__main__":
         # station details
         hechms_stations = read_csv('hechms_stations.csv')
 
-        # pool = get_Pool(host=CURW_FCST_HOST, port=CURW_FCST_PORT, user=CURW_FCST_USERNAME, password=CURW_FCST_PASSWORD,
-        #         db=CURW_FCST_DATABASE)
+        pool = get_Pool(host=CURW_FCST_HOST, port=CURW_FCST_PORT, user=CURW_FCST_USERNAME, password=CURW_FCST_PASSWORD,
+                db=CURW_FCST_DATABASE)
 
         # ########
         # # test
         # ########
 
-        USERNAME = "root"
-        PASSWORD = "password"
-        HOST = "127.0.0.1"
-        PORT = 3306
-        DATABASE = "curw_fcst"
+        # USERNAME = "root"
+        # PASSWORD = "password"
+        # HOST = "127.0.0.1"
+        # PORT = 3306
+        # DATABASE = "curw_fcst"
 
-        pool = get_Pool(host=HOST, port=PORT, user=USERNAME, password=PASSWORD, db=DATABASE)
+        # pool = get_Pool(host=HOST, port=PORT, user=USERNAME, password=PASSWORD, db=DATABASE)
 
         add_source(pool=pool, model=model, version=version, parameters=None)
-        add_variable(pool=pool, variable=variable)
-        add_unit(pool=pool, unit=unit, unit_type=unit_type)
+        # add_variable(pool=pool, variable=variable)
+        # add_unit(pool=pool, unit=unit, unit_type=unit_type)
 
         # add hechms output stations
 
@@ -64,10 +64,10 @@ if __name__=="__main__":
             add_station(pool=pool, name=station_name, latitude="%.6f" % float(lat), longitude="%.6f" % float(lon),
                     station_type=StationEnum.HECHMS, description="hecHMS output station")
 
-        destroy_Pool(pool=pool)
-
     except Exception:
         logger.info("Initialization process failed.")
         traceback.print_exc()
     finally:
         logger.info("Initialization process finished.")
+        destroy_Pool(pool=pool)
+
